@@ -99,13 +99,48 @@ public class Bank {
                 .flatMap(new FilterAndMapMoreThan10());
 
 
+        // (4) City change more than once in 1 min
+        DataStream<Tuple2<String, String>> freqCityChangeTransactions = data
+                //.keyBy(t -> t.f0)
+                .keyBy(new KeySelector<Tuple2<String, String>, String>() {
+                    public String getKey(Tuple2<String, String> value){
+                        return value.f0;
+                    }
+                })
+                .window(TumblingProcessingTimeWindows.of(Time.seconds(10)))
+                .process(new Citychange());
 
 
+        // Combine results
+        DataStream<Tuple2<String, String>> AllFlaggedTxn =
+                alarmedCustTransactions	.union(lostCardTransactions, excessiveTransactions,	freqCityChangeTransactions);
 
+        AllFlaggedTxn.writeAsText("/flagged_transaction");
+        // execute program
+        env.execute("Streaming Bank");
 
+    }
+    public static class Citychange extends ProcessWindowFunction<Tuple2<String, String>, Tuple2<String, String>, String, TimeWindow> {
+        public void process(String key, Context context, Iterable<Tuple2<String, String>> input, Collector<Tuple2<String, String>> out) {
+            String lastCity = "";
+            int changeCount = 0;
+            for (Tuple2<String, String> element : input) {
+                String city = element.f1.split(",")[2].toLowerCase();
 
+                if (lastCity.isEmpty()) {
+                    lastCity = city;
+                } else {
+                    if (!city.equals(lastCity)) {
+                        lastCity = city;
+                        changeCount += 1;
+                    }
+                }
 
-
+                if (changeCount >= 2) {
+                    out.collect(new Tuple2<String, String>("__ALARM__", element + "marked for FREQUENT city changes"));
+                }
+            }
+        }
     }
 
     public static class FilterAndMapMoreThan10	implements FlatMapFunction<Tuple3<String, String, Integer>, Tuple2<String, String>> {
