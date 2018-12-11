@@ -36,7 +36,7 @@ public class Bank {
             new MapStateDescriptor<String, AlarmedCustomer>("alarmed_customers", BasicTypeInfo.STRING_TYPE_INFO, Types.POJO(AlarmedCustomer.class));
 
     public static final MapStateDescriptor<String, LostCard> lostCardStateDescriptor =
-            new MapStateDescriptor<String, LostCard>("lost_cards", BasicTypeInfo.STRING_TYPE_INFO, Types.POJO(LostCard.class))
+            new MapStateDescriptor<String, LostCard>("lost_cards", BasicTypeInfo.STRING_TYPE_INFO, Types.POJO(LostCard.class));
 
     public static void main(String[] args) throws Exception {
 
@@ -86,6 +86,20 @@ public class Bank {
                 .connect(lostCardBroadcast)
                 .process(new LostCardCheck());
 
+        // (3) More than 10 transactions check
+        DataStream<Tuple2<String, String>> excessiveTransactions = data
+                .map(new MapFunction<Tuple2<String, String>, Tuple3<String, String, Integer>>() {
+                    public Tuple3<String, String, Integer> map(Tuple2<String, String> value) {
+                        return new Tuple3<String, String, Integer>(value.f0, value.f1, 1);
+                    }
+                })
+                .keyBy(0)
+                .window(TumblingProcessingTimeWindows.of(Time.seconds(10)))
+                .sum(2)
+                .flatMap(new FilterAndMapMoreThan10());
+
+
+
 
 
 
@@ -93,6 +107,15 @@ public class Bank {
 
 
     }
+
+    public static class FilterAndMapMoreThan10	implements FlatMapFunction<Tuple3<String, String, Integer>, Tuple2<String, String>> {
+        public void flatMap(Tuple3<String, String, Integer> value, Collector<Tuple2<String, String>> out) {
+            if (value.f2 > 10) {
+                out.collect(new Tuple2<String, String>("__ALARM__", value + " marked for >10 TXNs"));
+            }
+        }
+    }
+
 
     public static class AlarmedCustCheck extends KeyedBroadcastProcessFunction<String, Tuple2<String, String>, AlarmedCustomer,
             Tuple2<String, String>> {
